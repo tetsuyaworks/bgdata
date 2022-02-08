@@ -69,7 +69,7 @@ class BGDataset:
 
     @staticmethod
     def from_json(path):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return __class__.from_dict(data)
 
@@ -264,3 +264,11 @@ class BGPaitient:
         """
 
         return ml_df1
+
+
+if __name__ == "__main__":
+    json_path = "test/BG_dataset_20220204.json"
+    dt = BGDataset.from_json(json_path)
+    bg_df = dt.paitients[0].get_bg()
+    meal_df = dt.paitients[0].get_meal()
+    print(meal_df)
