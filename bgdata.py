@@ -1,9 +1,11 @@
-import os
 import datetime
 import json
 
 import pandas as pd
 import numpy as np
+
+
+VERSION = "0.00"
 
 
 class BGDataset:
@@ -240,35 +242,73 @@ class BGPaitient:
             "HbA1c": [self.hba1c],
         })
 
-    def get_bg_and_meal(self):
-        bg_df = self.get_bg()
-        ml_df0 = self.get_meal()
-        ml_df1 = bg_df.copy(deep=True).drop("blood_glucose_value", axis=1)
-        ml_df1["carbohydrate"] = 0.0
-        ml_df1["dietary_fiber"] = 0.0
-        ml_df1["suger_mass"] = 0.0
-        for v in bg_df.itertuples():
-            pass
 
-        """
-        bg_arr = bg_df.loc[:, ["time_course", "blood_glucose_value"]].to_numpy()
-        ml_arr = []
-        ml_tmp = ml_df.loc[:, ["time_course", "carbohydrate"]].to_numpy().tolist()
-        #print(ml_tmp)
-        for v in bg_arr:
-          if len(ml_tmp) > 0 and v[0] >= ml_tmp[0][0]:
-            ml_arr.append([v[0], ml_tmp.pop(0)[1]])
-          else:
-            ml_arr.append([v[0], 0])
-        ml_arr = np.array(ml_arr)
-        """
+def compliment_bg(df, min, silent=False):
+    gap_max_rate = 1.8  # 15分ごとのデータの場合、15*1.8=27分の空きをギャップと認識
+    time_idx = 0
+    val_idx = 1
 
-        return ml_df1
+    arr1 = df.loc[:, ["datetime", "blood_glucose_value"]].to_numpy()
+    arr2 = []
+    for i in range(len(arr1)-1):
+        arr2.append(arr1[i])
+        current_dt = arr1[i][0]
+        next_dt = arr1[i+1][0]
+        gap = (next_dt - current_dt).total_seconds() / 60
+        if gap > min * gap_max_rate:
+            if not silent:
+                print("gap is found [{}] to [{}]. value is complimented. ({} to {}).".format(arr1[i][0], arr1[i+1][0], arr1[i][1], arr1[i+1][1]))
+            comp_num = int(gap / min)
+            sum_diff = arr1[i+1][1] - arr1[i][1]
+            unit_diff = sum_diff / comp_num
+            for j in range(comp_num-1):
+                arr2.append(np.array([current_dt + datetime.timedelta(minutes=min*(j+1)), arr1[i][1]+unit_diff*(j+1)]))
+    arr2.append(arr1[-1])
+
+    return pd.DataFrame(arr2, columns=("datetime", "blood_glucose_value"))
+
+
+def add_time_course(bg_df, meal_df):
+
+    bg_df1 = bg_df.copy(deep=True)
+    meal_df1 = meal_df.copy(deep=True)
+    start_dt = bg_df["datetime"][0]
+    time_course = []
+    for i, dt in enumerate(bg_df1["datetime"]):
+        time_course.append((dt - start_dt).total_seconds() / (60 * 60 * 24))
+    bg_df1.insert(1, "time_course", time_course)
+    time_course = []
+    for i, dt in enumerate(meal_df1["datetime"]):
+        time_course.append((dt - start_dt).total_seconds() / (60 * 60 * 24))
+    meal_df1.insert(1, "time_course", time_course)
+
+    return bg_df1, meal_df1
+
+
+def split_days(bg_df, meal_df, days=2):
+
+    bg_df_list = []
+    ml_df_list = []
+    for i in range(0, 10, days):
+        bg_df1 = bg_df[bg_df["time_course"] >= i]
+        bg_df1 = bg_df1[bg_df1["time_course"] < i+days]
+        bg_df_list.append(bg_df1)
+        ml_df1 = meal_df[meal_df["time_course"] >= i]
+        ml_df1 = ml_df1[ml_df1["time_course"] < i+days]
+        ml_df_list.append(ml_df1)
+
+    return bg_df_list, ml_df_list
 
 
 if __name__ == "__main__":
     json_path = "test/BG_dataset_20220204.json"
-    dt = BGDataset.from_json(json_path)
-    bg_df = dt.paitients[0].get_bg()
-    meal_df = dt.paitients[0].get_meal()
-    print(meal_df)
+    data = BGDataset.from_json(json_path)
+    for paitient in data.paitients:
+        bg_df = paitient.get_bg()  # 血糖値データを抽出
+        meal_df = paitient.get_meal()  # 食事データを抽出
+        bg_df = compliment_bg(bg_df, 15, True)  # データの空白を埋める
+        bg_df, meal_df = add_time_course(bg_df, meal_df)  # データの中に経過時間(日)を付与
+        bg_df_list, meal_df_list = split_days(bg_df, meal_df, 2)  # 2日ごとのデータに分割
+
+        print(bg_df_list[0])
+        break
